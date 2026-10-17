@@ -1,0 +1,258 @@
+@import "tailwindcss";
+
+/* Zoom is disabled app-wide (see the viewport meta in index.html).
+   `touch-action: manipulation` drops the double-tap-to-zoom gesture while
+   leaving normal scrolling and taps alone, and text-size-adjust stops mobile
+   browsers reflowing font sizes on their own — both needed because iOS Safari
+   ignores user-scalable=no. Pinch gestures are blocked in main.jsx. */
+html {
+  touch-action: manipulation;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+@theme {
+  --font-sans: 'Inter', 'Poppins', system-ui, -apple-system, sans-serif;
+  
+  --color-brand-blue: #0B4EA2;
+  --color-brand-navy: #072C63;
+  --color-brand-yellow: #FFD400;
+  
+  --color-bg-light: #F7F9FC;
+  --color-card-bg: #FFFFFF;
+  --color-section-bg: #EAF3FF;
+  --color-soft-yellow: #FFF7CC;
+  
+  --color-text-primary: #1F2937;
+  --color-text-secondary: #6B7280;
+  --color-border-color: #D9E2F2;
+  
+  /* Standard Utility Fallbacks */
+  --color-blue-900: #0B4EA2;
+  --color-blue-950: #072C63;
+  --color-yellow-400: #FFD400;
+  --color-slate-50: #F7F9FC;
+  --color-slate-800: #1F2937;
+  --color-slate-500: #6B7280;
+  --color-slate-200: #D9E2F2;
+}
+
+@layer base {
+  body {
+    @apply font-sans text-text-secondary bg-bg-light;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    @apply text-text-primary font-medium;
+  }
+}
+
+@layer utilities {
+  .glass {
+    @apply backdrop-blur-md bg-white/70 border border-white/20;
+  }
+  
+  .subtle-shadow {
+    box-shadow: 0 4px 20px -2px rgba(13, 71, 161, 0.05);
+  }
+  
+  .premium-card {
+    @apply bg-white border border-border-color rounded-2xl hover:border-brand-blue/20 transition-all duration-300 hover:shadow-lg hover:shadow-brand-blue/5;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
+  }
+
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background-color: #cbd5e1;
+    border-radius: 9999px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background-color: #94a3b8;
+  }
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 transparent;
+  }
+}
+
+@keyframes marquee {
+  0% {
+    transform: translateX(0%);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.animate-marquee {
+  display: flex;
+  width: max-content;
+  animation: marquee 28s linear infinite;
+}
+
+.animate-marquee:hover {
+  animation-play-state: paused;
+}
+
+/* Service Provider App Font Size Scaling Overrides */
+body.service-provider-app-active,
+.service-provider-app-container {
+  font-size: 1.08em;
+}
+
+body.service-provider-app-active [class*="text-[7"],
+.service-provider-app-container [class*="text-[7"] {
+  font-size: 10.5px !important;
+}
+body.service-provider-app-active [class*="text-[8"],
+.service-provider-app-container [class*="text-[8"] {
+  font-size: 11.5px !important;
+}
+body.service-provider-app-active [class*="text-[9"],
+.service-provider-app-container [class*="text-[9"] {
+  font-size: 12.5px !important;
+}
+body.service-provider-app-active [class*="text-[10"],
+.service-provider-app-container [class*="text-[10"] {
+  font-size: 13.5px !important;
+}
+body.service-provider-app-active [class*="text-[11"],
+.service-provider-app-container [class*="text-[11"] {
+  font-size: 14px !important;
+}
+body.service-provider-app-active [class*="text-[12"],
+.service-provider-app-container [class*="text-[12"] {
+  font-size: 14.5px !important;
+}
+body.service-provider-app-active [class*="text-[13"],
+.service-provider-app-container [class*="text-[13"] {
+  font-size: 15px !important;
+}
+
+body.service-provider-app-active .text-xs,
+.service-provider-app-container .text-xs { font-size: 14.5px !important; }
+body.service-provider-app-active .text-sm,
+.service-provider-app-container .text-sm { font-size: 16px !important; }
+body.service-provider-app-active .text-base,
+.service-provider-app-container .text-base { font-size: 18px !important; }
+body.service-provider-app-active .text-lg,
+.service-provider-app-container .text-lg { font-size: 20.5px !important; }
+body.service-provider-app-active .text-xl,
+.service-provider-app-container .text-xl { font-size: 22.5px !important; }
+body.service-provider-app-active .text-2xl,
+.service-provider-app-container .text-2xl { font-size: 26px !important; }
+
+/* ─── Responsive layout for Customer & Service Provider panels ───────────────────
+   Mobile (< 768px):  untouched — the phone UI is the reference design.
+   Tablet (768px+):   content stays full-width but pages switch their rails to
+                      grids and constrain their own inner max-width.
+   Desktop (1024px+): the fixed top navbar (components/AppChrome.jsx) appears.
+   ─────────────────────────────────────────────────────────────────────────── */
+@media (min-width: 768px) {
+  body.customer-app-active,
+  body.service-provider-app-active {
+    background-color: #F7F9FC; /* Same as --color-bg-light token */
+  }
+
+  body.customer-app-active #root,
+  body.service-provider-app-active #root {
+    width: 100%;
+    max-width: 100%;
+    /* `clip` rather than `hidden`: overflow-x:hidden silently turns #root into a
+       scroll container, which makes it the scrollport for every position:sticky
+       page header inside it. Since #root never scrolls (the document does), those
+       headers stopped sticking and instead rendered offset by their own `top`
+       value. `clip` contains the same overflow without creating a scroll box.
+       Safari < 16 has no `clip`; the @supports block below keeps overflow
+       contained there (at the cost of the old sticky behaviour, which is what
+       those browsers had anyway). A plain duplicate declaration does not work —
+       the minifier collapses same-property declarations to the last one. */
+    overflow-x: clip;
+  }
+
+  @supports not (overflow-x: clip) {
+    body.customer-app-active #root,
+    body.service-provider-app-active #root {
+      overflow-x: hidden;
+    }
+  }
+}
+
+/* The desktop navbar is fixed at the top, so every page in these two panels has
+   to start 4rem lower and give back that 4rem of viewport height. Doing it here
+   rather than as a per-page padding class is what lets AppChrome cover all ~100
+   routes without each one opting in — and keeps the offset from drifting out of
+   sync with the navbar's own h-16. */
+@media (min-width: 1024px) {
+  body.app-has-topnav #root {
+    padding-top: 5rem;
+  }
+
+  body.app-has-topnav .min-h-screen {
+    min-height: calc(100vh - 5rem);
+  }
+
+  body.app-has-topnav .h-screen {
+    height: calc(100vh - 5rem);
+  }
+
+  /* Overlays and drawers are positioned against the viewport, not the padded
+     document, so they must keep the full height they asked for. */
+  body.app-has-topnav .fixed.min-h-screen {
+    min-height: 100vh;
+  }
+  body.app-has-topnav .fixed.h-screen {
+    height: 100vh;
+  }
+
+  /* The navbar covers the top 5rem of the viewport, so a page header pinned to
+     `top: 0` would scroll in behind it. Shifting them here rather than adding
+     `lg:top-20` to ~60 page headers keeps the offset in one place and means
+     pages added later inherit it. */
+  body.app-has-topnav .sticky.top-0 {
+    top: 5rem;
+  }
+
+  /* …except where the sticky pins to something other than the page: content in
+     a viewport-positioned overlay, or in its own scroll box, is already
+     measuring from the right edge. */
+  body.app-has-topnav .fixed .sticky.top-0,
+  body.app-has-topnav .overflow-y-auto .sticky.top-0,
+  body.app-has-topnav .overflow-auto .sticky.top-0 {
+    top: 0;
+  }
+}
+
+/* Super Admin Sidebar toggle transitions */
+.admin-sidebar-collapsed .ml-64,
+.admin-sidebar-collapsed [class*="ml-64"] {
+  margin-left: 0 !important;
+}
+
+.ml-64,
+[class*="ml-64"] {
+  transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Prevent horizontal scroll on all super-admin pages */
+body.super-admin-active {
+  overflow-x: hidden;
+}
+
+body.super-admin-active #root {
+  overflow-x: hidden;
+  max-width: 100vw;
+}
+

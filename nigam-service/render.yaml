@@ -1,0 +1,59 @@
+# Render Blueprint — Phase 12. Lets a user with a Render account run
+# "New +' -> 'Blueprint'" pointed at this repo to provision the API service in
+# one step, instead of manually clicking through the dashboard. See
+# backend/docs/DEPLOYMENT.md for the full connect-a-real-account walkthrough
+# (creating the Render account, wiring GitHub, and filling in every `sync: false`
+# secret below) — none of that can be done from inside this repo.
+services:
+  - type: web
+    name: nigam-care-backend
+    runtime: node
+    plan: starter
+    region: singapore
+    rootDir: backend
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /api/v1/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 4000
+      # Secrets below are intentionally left for the user to fill in via the
+      # Render dashboard (sync: false means "don't manage this value from the
+      # blueprint file") — none of these should ever be committed to git.
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_ACCESS_SECRET
+        sync: false
+      - key: JWT_REFRESH_SECRET
+        sync: false
+      - key: JWT_ACCESS_EXPIRES_IN
+        value: 15m
+      - key: JWT_REFRESH_EXPIRES_IN
+        value: 30d
+      - key: CORS_ORIGINS
+        sync: false
+      - key: OTP_PROVIDER
+        value: stub
+      # The stub provider only writes OTPs to the server log, so a hosted
+      # deployment needs one of two things to be loggable-into:
+      #   * OTP_PROVIDER=smsindiahub plus the SMSINDIAHUB_* credentials, or
+      #   * MOCK_OTP_CODE set to a fixed code (demo/staging only).
+      # Left unset here on purpose — without it no OTP can be completed in
+      # production, which is the safe default for a real launch.
+      - key: MOCK_OTP_CODE
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: CLOUDINARY_UPLOAD_FOLDER
+        value: nigam-care
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false

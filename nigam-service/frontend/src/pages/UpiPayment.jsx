@@ -1,0 +1,218 @@
+import { useState } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { ArrowLeft, ShieldCheck } from 'lucide-react';
+import { apiRequest } from '../lib/apiClient';
+import { payWithRazorpay } from '../lib/razorpayCheckout';
+import { submitBookingsForMeta, totalPriceFromResults } from '../lib/bookingSubmission';
+import { useAuth } from '../context/AuthContext';
+
+const UpiPayment = () => {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { user } = useAuth();
+
+  const [upiId, setUpiId] = useState('');
+
+  const [loading, setLoading] = useState(false);
+
+  // Extract navigation state
+  const paymentState = location.state || {};
+  const isProductBuy = !!paymentState.isApplianceBuy;
+  const itemName = paymentState.productName || 'AC Deep Cleaning';
+  const itemPrice = paymentState.price !== undefined ? paymentState.price : 5.00;
+  const finalPrice = paymentState.finalPrice !== undefined ? paymentState.finalPrice : itemPrice;
+
+  const handlePay = async () => {
+    const meta = paymentState.bookingMeta;
+    if (meta) {
+      setLoading(true);
+      try {
+<<<<<<< HEAD
+        // One booking per appliance type the customer selected in Step 1
+        // (e.g. 1 Window AC + 2 Split AC = 2 bookings) — each collects its
+        // own advance in turn, so a decline partway through never shows a
+        // booking as confirmed that was never actually paid for.
+        const results = await submitBookingsForMeta(meta, {
+          extra: { paymentMethod: 'UPI' },
+          onEach: async (result) => {
+            if (result.razorpay) {
+              await payWithRazorpay({
+                razorpay: result.razorpay,
+                verifyPath: `/bookings/${result.booking.id}/verify-payment`,
+                description: meta.service || meta.category,
+                prefill: { name: meta.fullName, contact: meta.mobile },
+              });
+            }
+=======
+        const result = await apiRequest('/bookings', {
+          method: 'POST',
+          body: {
+            category: meta.category,
+            productType: meta.productType,
+            serviceSlug: meta.serviceSlug,
+            serviceName: meta.serviceName || meta.service || meta.serviceSlug,
+            service: meta.service || meta.serviceName || meta.serviceSlug,
+            brand: meta.brand,
+            quantity: meta.quantity || 1,
+            scheduledDate: new Date().toISOString(),
+            timeSlot: { date: meta.date || '', time: meta.timeGroup || '' },
+            address: meta.address,
+            fullName: meta.fullName,
+            mobile: meta.mobile,
+            paymentMode: meta.paymentMode || 'after',
+>>>>>>> dc1a3e75dd5fbffa0cc623a26158ad34f3bfe018
+          },
+        });
+        const primary = results[0];
+
+        // Navigate to success page with real serviceRequestId returned from backend
+        const params = new URLSearchParams({
+          type: 'service',
+          serviceRequestId: primary.serviceRequest?.id || primary.serviceRequest?._id || '',
+          service: meta.service,
+          category: meta.category,
+          productType: meta.productType,
+          brand: meta.brand || '',
+          quantity: String(meta.quantity || 1),
+          date: meta.date || '',
+          timeGroup: meta.timeGroup || '',
+          totalPrice: String(totalPriceFromResults(results) || meta.totalPrice || 0),
+          advanceAmt: String(meta.advanceAmt || 0),
+          paymentMode: meta.paymentMode || 'advance',
+          bookingCount: String(results.length),
+        });
+        try {
+          sessionStorage.removeItem("ncc_last_booking_flow");
+        } catch (_err) {
+          // ignore session storage removal errors
+        }
+        navigate(`/booking-success?${params.toString()}`);
+      } catch (err) {
+        console.error('Failed to create booking:', err);
+        navigate('/payment-failure', {
+          state: {
+            errorMessage: err.message || 'Failed to register your service booking on the server.',
+            productName: itemName,
+            price: finalPrice,
+          }
+        });
+      } finally {
+        setLoading(false);
+      }
+    } else if (isProductBuy && paymentState.productId) {
+      // Product purchases go through the real order + gateway path. This branch
+      // used to jump straight to the success page, creating no order and taking
+      // no money.
+      setLoading(true);
+      try {
+        const orderRes = await apiRequest('/orders', {
+          method: 'POST',
+          auth: true,
+          body: {
+            items: [{ productId: paymentState.productId, quantity: paymentState.quantity || 1 }],
+            address: paymentState.address,
+            couponCode: paymentState.couponCode,
+            exchangeRequestId: paymentState.exchangeRequestId,
+            coinsToRedeem: paymentState.coinsToRedeem || 0,
+            paymentMethod: 'UPI',
+          },
+        });
+        const order = orderRes;
+        if (order.razorpay) {
+          await payWithRazorpay({
+            razorpay: order.razorpay,
+            verifyPath: `/orders/${order.id}/verify-payment`,
+            description: itemName,
+          });
+        }
+        navigate(`/booking-success?service=${encodeURIComponent(itemName)}&type=product&price=${itemPrice}&orderId=${order.id}`);
+      } catch (err) {
+        navigate('/payment-failure', {
+          state: { errorMessage: err.message || 'The purchase could not be completed.', productName: itemName, price: finalPrice },
+        });
+      } finally {
+        setLoading(false);
+      }
+    } else {
+      navigate('/payment-failure', {
+        state: {
+          errorMessage: 'This checkout is missing the details needed to place an order. Please start again from the product page.',
+          productName: itemName,
+          price: finalPrice,
+        },
+      });
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-[#F8FAFC] flex flex-col items-center justify-center p-4">
+      <div className="w-full max-w-md bg-white rounded-[30px] shadow-2xl overflow-hidden flex flex-col h-[700px] border border-slate-100">
+        
+        {/* Header */}
+        <div className="p-5 flex items-center border-b border-border-color flex-shrink-0">
+          <button 
+            onClick={() => navigate(-1)}
+            className="p-2 hover:bg-slate-100 rounded-full transition-colors cursor-pointer"
+          >
+            <ArrowLeft className="h-5 w-5 text-brand-blue" />
+          </button>
+          <h1 className="text-base font-extrabold text-brand-blue ml-3">UPI Payment</h1>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 p-5 flex flex-col gap-5 overflow-y-auto items-center">
+          
+          {/* The decorative QR that used to sit here was not a payment code —
+              scanning it did nothing. Razorpay Checkout shows a real, scannable
+              UPI QR when the customer picks UPI, so there is nothing to draw. */}
+          <div className="w-full border-t border-dashed border-slate-200 my-1"></div>
+
+          {/* UPI ID Form */}
+          <div className="w-full text-left">
+            <label className="text-[10px] font-bold text-text-secondary block mb-1">ENTER UPI ID / VPA</label>
+            <div className="flex gap-2">
+              <input 
+                type="text" 
+                placeholder="username@upi"
+                value={upiId}
+                onChange={(e) => setUpiId(e.target.value)}
+                className="flex-1 bg-slate-50 border border-slate-200 px-3 py-2.5 rounded-xl text-xs font-bold text-text-primary focus:border-brand-blue focus:bg-white outline-none transition-all"
+              />
+              <button 
+                type="button"
+                className="bg-brand-blue text-white px-3.5 rounded-xl text-xs font-bold hover:bg-blue-900 transition-all cursor-pointer"
+                onClick={() => setUpiId(`${user?.name ? user.name.split(' ')[0].toLowerCase() : 'customer'}@paytm`)}
+              >
+                Verify
+              </button>
+            </div>
+            <span className="text-[9px] text-text-secondary mt-1 block">Supported Apps: BHIM, PhonePe, Paytm, GooglePay, WhatsApp</span>
+          </div>
+
+          {/* Secure Trust Badge */}
+          <div className="bg-blue-50/40 border border-blue-50 p-2.5 rounded-xl flex items-center gap-2 mt-1 w-full text-left">
+            <ShieldCheck className="h-4 w-4 text-brand-blue flex-shrink-0" />
+            <span className="text-[9px] font-bold text-brand-blue leading-relaxed">
+              Dual-layer authorization protocol is active. Keep your secure banking app open.
+            </span>
+          </div>
+
+        </div>
+
+        {/* Footer */}
+        <div className="p-5 border-t border-slate-100 flex flex-col gap-2.5 flex-shrink-0 w-full">
+          <button
+            onClick={handlePay}
+            disabled={loading}
+            className="w-full bg-brand-yellow text-brand-blue font-extrabold py-3.5 rounded-2xl flex items-center justify-center gap-2 hover:bg-yellow-400 active:scale-[0.99] transition-all shadow-md cursor-pointer text-xs"
+          >
+            {loading ? 'Processing Payment...' : `Authorize UPI Pay ₹${finalPrice.toLocaleString('en-IN')}`}
+          </button>
+        </div>
+
+      </div>
+    </div>
+  );
+};
+
+export default UpiPayment;

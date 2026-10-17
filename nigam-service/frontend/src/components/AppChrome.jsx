@@ -1,0 +1,157 @@
+import { useLayoutEffect } from "react";
+import { useLocation } from "react-router-dom";
+import CustomerTopNav from "./CustomerTopNav";
+import ServiceProviderTopNav from "./ServiceProviderTopNav";
+
+/**
+ * AppChrome — renders the desktop (lg+) top navigation for whichever panel the
+ * current route belongs to.
+ *
+ * The nav used to be pasted into each page, which meant the ~50 pages that never
+ * got around to it rendered a stretched phone layout with no navigation at all on
+ * a desktop screen. Mounting it once from the router guarantees every customer and
+ * service provider route gets the same chrome; the matching top offset lives in
+ * index.css against body.customer-app-active / body.service-provider-app-active, so pages
+ * don't each have to remember a padding class either.
+ *
+ * Auth and marketing routes are excluded — they're full-bleed layouts of their own
+ * and there is nothing to navigate to yet.
+ */
+
+const CUSTOMER_CHROMELESS = new Set([
+  "/", "/login", "/signup", "/app", "/app/login", "/verify-otp",
+  "/forgot-password", "/reset-password", "/onboarding",
+  "/home", "/about-ncc", "/profile", "/area-not-serviceable",
+]);
+
+const TECH_CHROMELESS = new Set([
+  "/service-provider/login", "/service-provider/verify-otp",
+  "/service-provider/forgot-password", "/service-provider/apply",
+]);
+
+/** Longest-prefix match wins, so /profile doesn't shadow /profile-something. */
+const CUSTOMER_TABS = [
+  ["/categories", "categories"],
+  ["/services", "categories"],
+  ["/all-services", "categories"],
+  ["/cleaning-services", "categories"],
+  ["/appliance-services", "categories"],
+  ["/all-brands", "categories"],
+  ["/buy", "buy"],
+  ["/buy-new", "buy"],
+  ["/buy-product", "buy"],
+  ["/product-details", "buy"],
+  ["/extend-warranty", "buy"],
+  ["/bookings", "bookings"],
+  ["/my-bookings", "bookings"],
+  ["/booking", "bookings"],
+  ["/book/", "bookings"],
+  ["/profile", "account"],
+  ["/edit-profile", "account"],
+  ["/saved-addresses", "account"],
+  ["/help-support", "account"],
+  ["/faqs", "account"],
+  ["/payment-methods", "account"],
+  ["/notification-settings", "account"],
+  ["/my-orders", "account"],
+  ["/my-wishlist", "account"],
+  ["/wishlist", "account"],
+  ["/coupons", "account"],
+  ["/rewards", "account"],
+  ["/refer-earn", "account"],
+  ["/membership-plans", "account"],
+];
+
+const TECH_TABS = [
+  ["/service-provider/raise-part-request", "requests"],
+  ["/service-provider/inventory", "inventory"],
+  ["/service-provider/schedule", "schedule"],
+  ["/service-provider/profile", "profile"],
+  ["/service-provider/personal-info", "profile"],
+  ["/service-provider/settings", "profile"],
+  ["/service-provider/payout-settings", "profile"],
+  ["/service-provider/earnings", "profile"],
+  ["/service-provider/analytics", "profile"],
+  ["/service-provider/academy", "profile"],
+  ["/service-provider/help-support", "profile"],
+  ["/service-provider/announcements", "profile"],
+  ["/service-provider/skills", "profile"],
+  ["/service-provider/verification", "profile"],
+  ["/service-provider/history", "history"],
+];
+
+function matchTab(pathname, table, fallback) {
+  let best = fallback;
+  let bestLen = 0;
+  for (const [prefix, tab] of table) {
+    if (pathname === prefix || pathname.startsWith(prefix)) {
+      if (prefix.length > bestLen) {
+        best = tab;
+        bestLen = prefix.length;
+      }
+    }
+  }
+  return best;
+}
+
+/**
+ * Same prefix table the desktop CustomerTopNav uses, exposed so the mobile
+ * CustomerBottomNav (rendered inline per-page, not by AppChrome) highlights
+ * the same tab instead of drifting out of sync with the desktop nav.
+ */
+export function getCustomerActiveTab(pathname) {
+  return matchTab(pathname, CUSTOMER_TABS, "home");
+}
+
+/**
+ * True for routes that belong to the customer or service provider phone app — the two
+ * panels whose pages are authored at phone width and therefore need centring
+ * rather than stretching once the viewport gets wide.
+ */
+export function isPhonePanelRoute(pathname) {
+  if (pathname.startsWith("/super-admin") || pathname.startsWith("/brand-admin")) return false;
+  if (pathname === "/home" || pathname === "/about-ncc") return false;
+  if (CUSTOMER_CHROMELESS.has(pathname) || TECH_CHROMELESS.has(pathname)) return false;
+  if (pathname.startsWith("/book") || pathname.startsWith("/booking") || pathname.startsWith("/payment")) return false;
+  return true;
+}
+
+
+/** Tailwind max-width class for the panel container on a given route. */
+export function panelWidthClass(_pathname) {
+  return "max-w-screen-2xl";
+}
+
+function pickNav(pathname, search = "") {
+  if (pathname.startsWith("/service-provider")) {
+    if (TECH_CHROMELESS.has(pathname)) return null;
+    let activePage = matchTab(pathname, TECH_TABS, "jobs");
+    if (pathname === "/service-provider/raise-part-request" && search.includes("tab=inventory")) {
+      activePage = "inventory";
+    }
+    return <ServiceProviderTopNav activePage={activePage} />;
+  }
+  if (pathname.startsWith("/super-admin") || pathname.startsWith("/brand-admin")) return null;
+  if (CUSTOMER_CHROMELESS.has(pathname) || pathname.startsWith("/book") || pathname.startsWith("/booking") || pathname.startsWith("/payment")) return null;
+  return <CustomerTopNav activePage={matchTab(pathname, CUSTOMER_TABS, "home")} />;
+}
+
+const AppChrome = () => {
+  const { pathname, search } = useLocation();
+  const nav = pickNav(pathname, search);
+
+  // index.css keys the 4rem desktop top offset off this class rather than off the
+  // panel's body class, so pages that render no navbar (login, OTP) don't get a
+  // 4rem strip of empty page above their full-bleed hero.
+  //
+  // useLayoutEffect, not useEffect: the class drives #root's padding-top, so
+  // applying it after paint let two frames render with the content 64px too high
+  // and then jump. This is a client-only SPA, so there is no SSR warning to dodge.
+  useLayoutEffect(() => {
+    document.body.classList.toggle("app-has-topnav", nav !== null);
+  }, [nav]);
+
+  return nav;
+};
+
+export default AppChrome;

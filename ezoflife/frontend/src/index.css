@@ -1,0 +1,319 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+@import "tailwindcss";
+
+@plugin "tailwindcss-animate";
+
+@theme {
+  /* ==========================================
+     1. BRAND IDENTITY
+     ========================================== */
+  --color-primary: #000000;        /* Pure Black */
+  --color-secondary: #000000;      /* Pure Black */
+  --color-accent: #000000;         /* Consistent with primary */
+  
+  /* ==========================================
+     2. PAGE ARCHITECTURE
+     ========================================== */
+  --color-background: #F8FAFC;     /* Light Professional Background (Slate 50) */
+  --color-surface: #ffffff;        /* Main Content Surfaces (Cards, etc) */
+  --color-surface-bright: #ffffff; 
+  --color-surface-dim: #f1f5f9;    /* Muted Surfaces (Inputs, Dividers) */
+  
+  /* Container Hierarchy */
+  --color-surface-container: #ffffff;
+  --color-surface-container-low: #ffffff;
+  --color-surface-container-high: #f1f5f9;
+  --color-surface-container-highest: #e2e8f0;
+  
+  /* ==========================================
+     3. TYPOGRAPHY & CONTRAST
+     ========================================== */
+  --color-on-background: #0f172a;  /* Main text on light bg (Slate 900) */
+  --color-on-surface: #1e293b;     /* Main text on cards */
+  --color-on-surface-variant: #64748b;
+  
+  /* High Contrast text (for dark components) */
+  --color-on-primary: #ffffff;
+  --color-on-secondary: #ffffff;
+  --color-on-primary-container: #ffffff;
+  --color-on-secondary-container: #ffffff;
+  
+  /* ==========================================
+     4. FUNCTIONAL STATES
+     ========================================== */
+  --color-error: #c53030;
+  --color-on-error: #ffffff;
+  --color-error-container: #feb2b2;
+  --color-on-error-container: #ffffff;
+  
+  --color-outline: #000000;
+  --color-outline-variant: #000000;
+
+  /* ==========================================
+     5. LEGACY & EXTENDED MAPPINGS
+     ========================================== */
+  --color-primary-fixed: #319795;
+  --color-primary-fixed-dim: #38b2ac;
+  --color-primary-dim: #0f172a;
+  --color-secondary-fixed: #e6fffa;
+  --color-secondary-fixed-dim: #4fd1c5;
+  --color-secondary-dim: #1e293b;
+  --color-tertiary: #0f172a;
+  --color-tertiary-fixed: #b2f5ea;
+  --color-tertiary-fixed-dim: #81e6d9;
+  --color-tertiary-dim: #285e61;
+  --color-tertiary-container: #f1f5f9;
+  --color-on-tertiary: #ffffff;
+  --color-on-tertiary-container: #ffffff;
+  --color-inverse-primary: #319795;
+  --color-inverse-surface: #1a202c;
+  --color-inverse-on-surface: #000000;
+  --color-surface-tint: #0f172a;
+
+  /* ==========================================
+     6. RADIUS & FONTS
+     ========================================== */
+  --font-inter: "Inter", sans-serif;
+  --font-headline: "Plus Jakarta Sans", sans-serif;
+  --font-body: "Manrope", sans-serif;
+  --font-label: "Manrope", sans-serif;
+
+  --radius-default: 1rem;
+  --radius-lg: 2rem;
+  --radius-xl: 3rem;
+}
+
+html {
+  background: linear-gradient(135deg, #F8FAFC 0%, #a1f0e2 100%);
+  background-attachment: fixed;
+  scroll-behavior: smooth;
+  overscroll-behavior-y: none;
+}
+
+@layer base {
+  body {
+    background: linear-gradient(135deg, #F8FAFC 0%, #a1f0e2 100%);
+    background-attachment: fixed;
+    @apply text-on-surface antialiased font-body overflow-x-hidden w-full;
+    min-height: 100dvh;
+    min-height: 100svh; /* More robust for mobile browser chrome */
+    position: relative;
+    touch-action: pan-x pan-y;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+  }
+
+  input, textarea, [contenteditable="true"], .selectable {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+  
+  #root {
+    @apply min-h-[100dvh] flex flex-col w-full;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-body tracking-tighter;
+  }
+
+  .material-symbols-outlined {
+    font-family: 'Material Symbols Outlined' !important;
+    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+    display: inline-block;
+    line-height: 1;
+    text-transform: none;
+    letter-spacing: normal;
+    word-wrap: normal;
+    white-space: nowrap;
+    direction: ltr;
+  }
+}
+
+@layer utilities {
+  .flex-center {
+    @apply flex items-center justify-center;
+  }
+  
+  .glass-effect {
+    @apply bg-surface/70 backdrop-blur-xl border border-white/20;
+  }
+
+  .primary-gradient, .bg-primary-gradient {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+  }
+
+  .vendor-gradient {
+    background: linear-gradient(135deg, #000000 0%, #1a1a1a 100%);
+  }
+
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  
+  .hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .tap-target-bounce-effect:active {
+    transform: scale(0.95);
+    transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  
+  .safe-area-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .premium-reflection {
+    position: relative;
+    overflow: hidden;
+  }
+  
+  .premium-reflection::after {
+    content: '';
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: linear-gradient(
+      45deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.05) 45%,
+      rgba(255, 255, 255, 0.2) 50%,
+      rgba(255, 255, 255, 0.05) 55%,
+      transparent 100%
+    );
+    transform: rotate(25deg);
+    transition: all 0.7s cubic-bezier(0.19, 1, 0.22, 1);
+    pointer-events: none;
+    z-index: 10;
+  }
+
+  .premium-reflection:hover::after {
+    left: 100%;
+    top: 100%;
+  }
+
+  .tactical-glow {
+    box-shadow: 0 0 15px rgba(0, 0, 0, 0.05);
+    transition: box-shadow 0.3s ease;
+  }
+
+  .tactical-glow:hover {
+    box-shadow: 0 0 25px rgba(2, 132, 199, 0.15);
+  }
+
+  .gpu-accelerated {
+    transform: translateZ(0);
+    backface-visibility: hidden;
+    perspective: 1000px;
+    will-change: transform, opacity;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: #f1f5f9;
+    border-radius: 10px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 10px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+  }
+
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 #f1f5f9;
+  }
+}
+
+
+/* Strategic Admin Overrides - Enterprise professional feel */
+.admin-theme {
+  font-family: 'Inter', system-ui, sans-serif;
+  
+  /* Admin-Specific Overrides (Inherits teal bg but uses slate for internal UI) */
+  --color-surface: #ffffff;
+  --color-surface-container: #fcfdfe;
+  --color-surface-container-high: #f8fafc;
+  --color-primary: #0f172a;
+  --color-on-surface: #1e293b;
+  
+  /* Slate-based professional palette (internal) */
+  --color-slate-100: #f1f5f9;
+  --color-slate-200: #e2e8f0;
+  --color-slate-300: #cbd5e1;
+  --color-slate-400: #94a3b8;
+  --color-slate-900: #0f172a;
+
+  /* Enterprise flat radius */
+  --radius-minimal: 2px;
+  --radius-sm: 4px;
+  --radius-md: 4px;
+
+  background: linear-gradient(135deg, var(--color-background) 0%, #a1f0e2 100%);
+}
+
+.admin-theme * {
+    border-color: var(--color-slate-100);
+}
+
+.admin-theme .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+}
+
+/* Custom Tactical Scrollbar */
+.admin-theme ::-webkit-scrollbar {
+  width: 6px;
+  height: 8px;
+}
+
+.admin-theme ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.admin-theme ::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 10px;
+}
+
+.admin-theme ::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+.admin-theme ::selection {
+  background: #0f172a;
+  color: #ffffff;
+}
+
+/* Desktop-Feel Enterprise Overrides */
+@media (min-width: 1024px) {
+    .admin-theme .uppercase:not(.font-bold) {
+        text-transform: none !important;
+    }
+
+    .admin-theme .tracking-widest:not(.font-bold) {
+        letter-spacing: normal !important;
+    }
+
+    .admin-theme .font-bold:not(.font-black) {
+        font-weight: 600 !important; /* Semi-bold on desktop for sharper text */
+    }
+
+    .admin-theme .shadow-lg,
+    .admin-theme .shadow-xl {
+        box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.05) !important;
+        border: 1px solid var(--color-slate-100);
+    }
+}

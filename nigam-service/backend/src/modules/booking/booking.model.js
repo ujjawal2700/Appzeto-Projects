@@ -1,0 +1,88 @@
+import mongoose from 'mongoose';
+import { applyStandardPlugins } from '../shared/plugins.js';
+import { ID_PREFIXES } from '../../config/constants.js';
+import { addressSchema } from '../auth/address.schema.js';
+
+const bookingSchema = new mongoose.Schema(
+  {
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    category: { type: String, required: true },
+    productType: String,
+    // Snapshot of the chosen catalog service at booking time (not a live ref) — prices/desc
+    // shouldn't retroactively change on a customer's existing booking if the catalog is edited later.
+    service: {
+      slug: String,
+      name: String,
+      price: Number,
+      desc: String,
+      unit: String,
+    },
+    brand: String,
+    quantity: { type: Number, default: 1 },
+    scheduledDate: Date,
+    timeSlot: { date: String, time: String },
+    address: addressSchema, // snapshot, same reasoning as `service` above
+    fullName: String,
+    mobile: String,
+    paymentMode: { type: String, enum: ['advance', 'after'], default: 'after' },
+    advanceAmount: { type: Number, default: 0 },
+    // Set only once the gateway signature has verified — the advance used to be
+    // recorded as an amount with nothing tracking whether it was ever collected.
+    advancePaid: { type: Boolean, default: false },
+    totalPrice: { type: Number, required: true },
+    status: {
+      type: String,
+      enum: ['Upcoming', 'Ongoing', 'Parts Pending', 'Rescheduled', 'Completed', 'Cancelled'],
+      default: 'Upcoming',
+      index: true,
+    },
+    completionOtp: { type: String, default: () => Math.floor(1000 + Math.random() * 9000).toString() },
+    // The customer's own sign-off on a spare part the technician requested,
+    // before it ever reaches the super-admin approval queue — a technician
+    // used to be able to add a part costing real money to the bill with the
+    // customer only informed after the fact, never asked.
+    partApproval: {
+      status: { type: String, enum: ['Pending', 'Approved', 'Rejected', null], default: null },
+      partNames: [String],
+      amount: Number,
+      requestedAt: Date,
+      respondedAt: Date,
+    },
+    serviceProvider: { type: mongoose.Schema.Types.ObjectId, ref: 'ServiceProvider', default: null, index: true },
+    isAccepted: { type: Boolean, default: false, index: true },
+    serviceRequest: { type: mongoose.Schema.Types.ObjectId, ref: 'ServiceRequest', default: null },
+    isInstant: { type: Boolean, default: false },
+    instantStatus: {
+      type: String,
+      enum: ['SEARCHING', 'ASSIGNED', 'EN_ROUTE', 'IN_PROGRESS', 'PARTS_PENDING', 'RESCHEDULED', 'COMPLETED', 'CANCELLED'],
+      default: null,
+    },
+    instantRequestedAt: Date,
+    cancellationReason: { type: String, default: null },
+    // When the hunt for a service provider gives up (booking.service.js
+    // expireStaleSearches). Pushed out again on reschedule; cleared on accept.
+    searchExpiresAt: { type: Date, default: null, index: true },
+    // Why an expired search ended, so the customer app can say the right thing.
+    searchEndReason: {
+      type: String,
+      enum: ['NO_PROVIDERS_NEARBY', 'PROVIDERS_NOT_ACCEPTING', null],
+      default: null,
+    },
+    cancelledAt: { type: Date, default: null },
+    rescheduledAt: { type: Date, default: null },
+    rescheduleReason: { type: String, default: null },
+    rescheduleCount: { type: Number, default: 0 },
+    providerRescheduleStatus: {
+      type: String,
+      enum: ['NONE', 'PENDING', 'ACCEPTED', 'REJECTED'],
+      default: 'NONE',
+    },
+  },
+  { timestamps: true },
+);
+
+bookingSchema.index({ user: 1, status: 1, createdAt: -1 });
+
+applyStandardPlugins(bookingSchema, { prefix: ID_PREFIXES.BOOKING });
+
+export const Booking = mongoose.models.Booking || mongoose.model('Booking', bookingSchema);

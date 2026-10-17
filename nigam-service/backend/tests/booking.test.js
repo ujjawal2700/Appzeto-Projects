@@ -1,0 +1,603 @@
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from '@jest/globals';
+import request from 'supertest';
+import mongoose from 'mongoose';
+import { createApp } from '../src/app.js';
+import { registerAllModels } from '../src/config/registerModels.js';
+import { ensureIndexes } from '../src/config/db.js';
+import { User } from '../src/modules/auth/user.model.js';
+import { ServiceProvider } from '../src/modules/service-provider/serviceProvider.model.js';
+import { Category } from '../src/modules/catalog/category.model.js';
+import { ProductType } from '../src/modules/catalog/productType.model.js';
+import { ServiceCatalogItem } from '../src/modules/catalog/serviceCatalogItem.model.js';
+import { Booking } from '../src/modules/booking/booking.model.js';
+import { ServiceRequest } from '../src/modules/service-requests/serviceRequest.model.js';
+import { ServicePageConfig } from '../src/modules/super-admin/servicePageConfig.model.js';
+import { sweepExpiredAssignments } from '../src/modules/service-requests/serviceRequest.service.js';
+import { expireStaleSearches, SEARCH_END_MESSAGES } from '../src/modules/booking/booking.service.js';
+import { hashPassword } from '../src/modules/auth/password.js';
+import { ROLES } from '../src/config/constants.js';
+import { testDbUri } from './helpers/testDb.js';
+import { readOtpCode } from './helpers/otp.js';
+
+const TEST_DB_URI = testDbUri('booking');
+
+let app;
+
+
+async function loginAndVerify({ role, identifier, password }) {
+  await request(app).post('/api/v1/auth/login').send({ role, identifier, password }).expect(200);
+  const code = readOtpCode(identifier);
+  const res = await request(app).post('/api/v1/auth/otp/verify').send({ role, identifier, code }).expect(200);
+  return res.body.data.accessToken;
+}
+
+async function seedCatalog() {
+  const category = await Category.create({ key: 'AC', name: 'AC', color: '#0D47A1' });
+  await ProductType.create({ category: category._id, slug: 'split', name: 'Split AC' });
+  await ServiceCatalogItem.create({ category: category._id, slug: 'repair', name: 'Repair', price: 299 });
+  await ServiceCatalogItem.create({ category: category._id, slug: 'installation', name: 'Installation', price: 499 });
+  return category;
+}
+
+async function seedCustomer(phone = '9200000001') {
+  await User.create({ role: ROLES.CUSTOMER, phone, name: 'Test Customer', passwordHash: await hashPassword('password123') });
+  return loginAndVerify({ role: ROLES.CUSTOMER, identifier: phone, password: 'password123' });
+}
+
+async function seedServiceProvider({ phone = '9300000001', specs = ['AC'], availability = 'Available' } = {}) {
+  const user = await User.create({
+    role: ROLES.SERVICE_PROVIDER,
+    phone,
+    name: 'Test Service Provider',
+    passwordHash: await hashPassword('password123'),
+  });
+  const serviceProvider = await ServiceProvider.create({ user: user._id, name: 'Test Service Provider', phone, status: 'Active', availability, specs });
+  const token = await loginAndVerify({ role: ROLES.SERVICE_PROVIDER, identifier: phone, password: 'password123' });
+  return { serviceProvider, token };
+}
+
+beforeAll(async () => {
+  await registerAllModels();
+  await mongoose.connect(TEST_DB_URI);
+  await ensureIndexes();
+  app = createApp().listen(0);
+});
+
+afterAll(async () => {
+  await new Promise((resolve) => app.close(resolve));
+  await mongoose.connection.dropDatabase();
+  await mongoose.disconnect();
+});
+
+beforeEach(async () => {
+  await Promise.all([
+    User.deleteMany({}),
+    ServiceProvider.deleteMany({}),
+    Category.deleteMany({}),
+    ProductType.deleteMany({}),
+    ServiceCatalogItem.deleteMany({}),
+    Booking.deleteMany({}),
+    ServiceRequest.deleteMany({}),
+    ServicePageConfig.deleteMany({}),
+  ]);
+});
+
+describe('POST /bookings — full booking -> service-request -> auto-assign flow', () => {
+  it('creates a booking with a server-priced total, an auto-assigned serviceProvider, and a linked ServiceRequest at status Assigned', async () => {
+    await seedCatalog();
+    const { serviceProvider } = await seedServiceProvider();
+    const token = await seedCustomer();
+
+    const res = await request(app)
+      .post('/api/v1/bookings')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ category: 'AC', serviceSlug: 'repair', quantity: 2 })
+      .expect(201);
+
+    const { booking, serviceRequest, serviceProvider: assigned } = res.body.data;
+    expect(booking.totalPrice).toBe(598); // 299 * 2, computed server-side from the catalog, not client-supplied
+    expect(booking.humanId).toMatch(/^NCC-\d{6}-\d{4}$/);
+    expect(booking.serviceProvider).toBe(serviceProvider.id);
+    expect(assigned.name).toBe('Test Service Provider');
+
+    expect(serviceRequest.status).toBe('Assigned');
+    expect(serviceRequest.timeline.map((t) => t.stepLabel)).toEqual(['New', 'Assigned']);
+    expect(serviceRequest.humanId).toMatch(/^SR-\d{4}$/);
+    expect(serviceRequest.booking).toBe(booking.id);
+  });
+
+  it('adds the product type\'s price addon on top of the service price, server-side', async () => {
+    const category = await seedCatalog();
+    await ProductType.findOneAndUpdate({ category: category._id, slug: 'split' }, { priceAddon: 200 });
+    await seedServiceProvider();
+    const token = await seedCustomer();
+
+    const res = await request(app)
+      .post('/api/v1/bookings')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ category: 'AC', serviceSlug: 'installation', productType: 'Split AC', quantity: 1 })
+      .expect(201);
+
+    // Installation is ₹499; Split AC carries a ₹200 addon set on the real catalog.
+    expect(res.body.data.booking.totalPrice).toBe(699);
+  });
+
+  it('does not add an addon for a product type with none set, or an unrecognized one', async () => {
+    await seedCatalog();
+    await seedServiceProvider();
+    const token = await seedCustomer();
+
+    const res = await request(app)
+      .post('/api/v1/bookings')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ category: 'AC', serviceSlug: 'installation', productType: 'Split AC' })
+      .expect(201);
+    expect(res.body.data.booking.totalPrice).toBe(499);
+
+    await Booking.deleteMany({});
+    await ServiceRequest.deleteMany({});
+    const res2 = await request(app)
+      .post('/api/v1/bookings')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ category: 'AC', serviceSlug: 'installation', productType: 'Nonexistent Type' })
+      .expect(201);
+    expect(res2.body.data.booking.totalPrice).toBe(499);
+  });
+
+  it('ignores a client-supplied price — total is always derived from the catalog', async () => {
+    await seedCatalog();
+    await seedServiceProvider();
+    const token = await seedCustomer();
+
+    const res = await request(app)
+      .post('/api/v1/bookings')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ category: 'AC', serviceSlug: 'repair', totalPrice: 1, price: 1 })
+      .expect(201);
+
+    expect(res.body.data.booking.totalPrice).toBe(299);
+  });
+
+  it('prices a named service from the CMS service page, ignoring the client total and capping the advance', async () => {
+    await seedCatalog();
+    await ServicePageConfig.create({
+      serviceKey: 'AC repair',
+      catalog: [{ section: 'Repairs', items: [{ name: 'AC repair Standard Work', price: '₹349' }] }],
+    });
+    const token = await seedCustomer();
+
+    const res = await request(app)
+      .post('/api/v1/bookings')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        category: 'AC',
+        serviceSlug: 'ac_repair_standard_work',
+        serviceName: 'AC repair Standard Work',
+        quantity: 2,
+        price: 1,
+        totalPrice: 2,
+        advanceAmount: 5000,
+        paymentMode: 'advance',
+      })
+      .expect(201);
+
+    expect(res.body.data.booking.totalPrice).toBe(698);
+    expect(res.body.data.booking.service.name).toBe('AC repair Standard Work');
+    expect(res.body.data.booking.advanceAmount).toBe(698); // clamped to the total
+  });
+
+  it('refuses a named service that has no price anywhere instead of booking it at the client\'s figure', async () => {
+    await seedCatalog();
+    const token = await seedCustomer();
+    await request(app)
+      .post('/api/v1/bookings')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ category: 'AC', serviceSlug: 'made_up', serviceName: 'Made Up Service', price: 1, totalPrice: 1 })
+      .expect(400);
+    expect(await Booking.countDocuments()).toBe(0);
+  });
+
+  it('sweeps an unanswered assignment older than the response window back into the pool', async () => {
+    await seedCatalog();
+    const { serviceProvider } = await seedServiceProvider();
+    const token = await seedCustomer();
+    const res = await request(app)
+      .post('/api/v1/bookings')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ category: 'AC', serviceSlug: 'repair' })
+      .expect(201);
+    const srId = res.body.data.serviceRequest.id;
+
+    // Fresh assignment: untouched.
+    expect((await sweepExpiredAssignments()).passedOn).toBe(0);
+
+    await ServiceRequest.updateOne({ _id: srId }, { assignedAt: new Date(Date.now() - 2 * 60 * 1000) });
+    const result = await sweepExpiredAssignments();
+    expect(result.passedOn).toBe(1);
+
+    const sr = await ServiceRequest.findById(srId);
+    expect(sr.declinedBy.map(String)).toContain(String(serviceProvider._id));
+    expect(String(sr.serviceProvider || '')).not.toBe(String(serviceProvider._id));
+  });
+
+  it('creates the booking with no serviceProvider assigned (and ServiceRequest stays "New") when none are available', async () => {
+    await seedCatalog();
+    // no service provider seeded at all
+    const token = await seedCustomer();
+
+    const res = await request(app)
+      .post('/api/v1/bookings')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ category: 'AC', serviceSlug: 'repair' })
+      .expect(201);
+
+    expect(res.body.data.booking.serviceProvider).toBeNull();
+    expect(res.body.data.serviceRequest.status).toBe('New');
+    expect(res.body.data.serviceProvider).toBeNull();
+  });
+
+  it('404s for an unknown category/service combination', async () => {
+    await seedCatalog();
+    const token = await seedCustomer();
+    await request(app)
+      .post('/api/v1/bookings')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ category: 'AC', serviceSlug: 'not-a-real-service' })
+      .expect(404);
+  });
+
+  it('rejects an unauthenticated request with 401', async () => {
+    await request(app).post('/api/v1/bookings').send({ category: 'AC', serviceSlug: 'repair' }).expect(401);
+  });
+
+  it('rejects a non-customer role (e.g. serviceProvider) with 403', async () => {
+    await seedCatalog();
+    const { token } = await seedServiceProvider();
+    await request(app)
+      .post('/api/v1/bookings')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ category: 'AC', serviceSlug: 'repair' })
+      .expect(403);
+  });
+});
+
+describe('GET /bookings, GET /bookings/:id — ownership', () => {
+  it('lists only the requesting customer\'s own bookings', async () => {
+    await seedCatalog();
+    await seedServiceProvider();
+    const tokenA = await seedCustomer('9200000002');
+    const tokenB = await seedCustomer('9200000003');
+
+    await request(app).post('/api/v1/bookings').set('Authorization', `Bearer ${tokenA}`).send({ category: 'AC', serviceSlug: 'repair' });
+
+    const resA = await request(app).get('/api/v1/bookings').set('Authorization', `Bearer ${tokenA}`).expect(200);
+    expect(resA.body.data).toHaveLength(1);
+
+    const resB = await request(app).get('/api/v1/bookings').set('Authorization', `Bearer ${tokenB}`).expect(200);
+    expect(resB.body.data).toHaveLength(0);
+  });
+
+  it('rejects viewing another customer\'s booking with 403', async () => {
+    await seedCatalog();
+    await seedServiceProvider();
+    const tokenA = await seedCustomer('9200000004');
+    const tokenB = await seedCustomer('9200000005');
+
+    const createRes = await request(app)
+      .post('/api/v1/bookings')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .send({ category: 'AC', serviceSlug: 'repair' });
+
+    await request(app)
+      .get(`/api/v1/bookings/${createRes.body.data.booking.id}`)
+      .set('Authorization', `Bearer ${tokenB}`)
+      .expect(403);
+  });
+});
+
+describe('POST /bookings/:id/cancel', () => {
+  it('cancels the booking and its linked ServiceRequest', async () => {
+    await seedCatalog();
+    await seedServiceProvider();
+    const token = await seedCustomer('9200000006');
+
+    const createRes = await request(app)
+      .post('/api/v1/bookings')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ category: 'AC', serviceSlug: 'repair' });
+    const { booking, serviceRequest } = createRes.body.data;
+
+    const cancelRes = await request(app)
+      .post(`/api/v1/bookings/${booking.id}/cancel`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(cancelRes.body.data.status).toBe('Cancelled');
+
+    const srRes = await request(app).get(`/api/v1/service-requests/${serviceRequest.id}`).set('Authorization', `Bearer ${token}`);
+    expect(srRes.body.data.status).toBe('Cancelled');
+  });
+});
+
+describe('service request status transitions — server-side state machine', () => {
+  async function createAssignedBooking() {
+    await seedCatalog();
+    const { token: serviceProviderToken } = await seedServiceProvider({ phone: '9300000002' });
+    const custToken = await seedCustomer('9200000007');
+    const createRes = await request(app)
+      .post('/api/v1/bookings')
+      .set('Authorization', `Bearer ${custToken}`)
+      .send({ category: 'AC', serviceSlug: 'repair' });
+    return { srId: createRes.body.data.serviceRequest.id, serviceProviderToken, custToken };
+  }
+
+  it('lets the assigned serviceProvider make a valid transition and records it in the timeline', async () => {
+    const { srId, serviceProviderToken } = await createAssignedBooking();
+
+    const res = await request(app)
+      .patch(`/api/v1/service-requests/${srId}/status`)
+      .set('Authorization', `Bearer ${serviceProviderToken}`)
+      .send({ status: 'Engineer Accepted' })
+      .expect(200);
+
+    expect(res.body.data.status).toBe('Engineer Accepted');
+    expect(res.body.data.timeline.map((t) => t.stepLabel)).toEqual(['New', 'Assigned', 'Engineer Accepted']);
+  });
+
+  it('rejects an out-of-order transition (skipping steps) with 400', async () => {
+    const { srId, serviceProviderToken } = await createAssignedBooking();
+
+    await request(app)
+      .patch(`/api/v1/service-requests/${srId}/status`)
+      .set('Authorization', `Bearer ${serviceProviderToken}`)
+      .send({ status: 'Closed' })
+      .expect(400);
+  });
+
+  it('rejects a transition attempt from the customer with 403', async () => {
+    const { srId, custToken } = await createAssignedBooking();
+
+    await request(app)
+      .patch(`/api/v1/service-requests/${srId}/status`)
+      .set('Authorization', `Bearer ${custToken}`)
+      .send({ status: 'Engineer Accepted' })
+      .expect(403);
+  });
+
+  it('rejects a transition attempt from a serviceProvider who is not the one assigned', async () => {
+    const { srId } = await createAssignedBooking();
+    const { token: otherTechToken } = await seedServiceProvider({ phone: '9300000003' });
+
+    await request(app)
+      .patch(`/api/v1/service-requests/${srId}/status`)
+      .set('Authorization', `Bearer ${otherTechToken}`)
+      .send({ status: 'Engineer Accepted' })
+      .expect(403);
+  });
+
+  it('walks a request through the full happy-path lifecycle to Closed', async () => {
+    const { srId, serviceProviderToken } = await createAssignedBooking();
+    const steps = [
+      'Engineer Accepted',
+      'Visit Scheduled',
+      'Engineer Reached',
+      'Diagnosis Done',
+      'Repair Completed',
+      'Customer Confirmation',
+      'Closed',
+    ];
+
+    for (const status of steps) {
+      const res = await request(app)
+        .patch(`/api/v1/service-requests/${srId}/status`)
+        .set('Authorization', `Bearer ${serviceProviderToken}`)
+        .send({ status });
+      expect(res.status).toBe(200);
+    }
+
+    const final = await request(app).get(`/api/v1/service-requests/${srId}`).set('Authorization', `Bearer ${serviceProviderToken}`);
+    expect(final.body.data.status).toBe('Closed');
+    expect(final.body.data.timeline).toHaveLength(9); // New, Assigned, + the 7 steps above
+
+    // Closed is terminal — no further transitions allowed.
+    await request(app)
+      .patch(`/api/v1/service-requests/${srId}/status`)
+      .set('Authorization', `Bearer ${serviceProviderToken}`)
+      .send({ status: 'New' })
+      .expect(400);
+  });
+});
+
+describe('manual assignment from the super-admin console', () => {
+  async function seedSuperAdmin() {
+    const email = 'assign-admin@test.com';
+    await User.create({ role: ROLES.SUPER_ADMIN, name: 'Super Admin', email, passwordHash: await hashPassword('password123'), status: 'Active' });
+    return loginAndVerify({ role: ROLES.SUPER_ADMIN, identifier: email, password: 'password123' });
+  }
+
+  // A request with no service provider: created directly rather than through /bookings,
+  // which auto-assigns on the way in.
+  async function seedUnassignedRequest() {
+    const customer = await User.create({
+      role: ROLES.CUSTOMER, phone: '9200000031', name: 'Unassigned Customer', passwordHash: await hashPassword('password123'),
+    });
+    return ServiceRequest.create({ user: customer._id, category: 'AC', description: 'Not cooling' });
+  }
+
+  it('ranks candidates and assigns the chosen one, moving the request to Assigned', async () => {
+    const adminToken = await seedSuperAdmin();
+    const { serviceProvider } = await seedServiceProvider({ phone: '9300000031' });
+    const sr = await seedUnassignedRequest();
+
+    const suggestRes = await request(app)
+      .get(`/api/v1/service-requests/${sr.id}/service-provider-suggestions`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    expect(suggestRes.body.data[0]).toMatchObject({ id: serviceProvider.id, name: 'Test Service Provider' });
+    expect(typeof suggestRes.body.data[0].score).toBe('number');
+    expect(suggestRes.body.data[0].breakdown).toBeDefined();
+
+    const assignRes = await request(app)
+      .patch(`/api/v1/service-requests/${sr.id}/assign`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ serviceProvider: serviceProvider.id })
+      .expect(200);
+    expect(assignRes.body.data.status).toBe('Assigned');
+    expect(assignRes.body.data.serviceProvider.name).toBe('Test Service Provider');
+    expect(assignRes.body.data.timeline.map((t) => t.stepLabel)).toContain('Assigned');
+  });
+
+  it('falls back to the weighted engine when no serviceProvider is named', async () => {
+    const adminToken = await seedSuperAdmin();
+    const { serviceProvider } = await seedServiceProvider({ phone: '9300000032' });
+    const sr = await seedUnassignedRequest();
+
+    const res = await request(app)
+      .patch(`/api/v1/service-requests/${sr.id}/assign`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({})
+      .expect(200);
+    expect(String(res.body.data.serviceProvider.id)).toBe(String(serviceProvider.id));
+  });
+
+  it('409s when there is nobody available to auto-assign to', async () => {
+    const adminToken = await seedSuperAdmin();
+    const sr = await seedUnassignedRequest();
+
+    const res = await request(app)
+      .patch(`/api/v1/service-requests/${sr.id}/assign`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({})
+      .expect(409);
+    expect(res.body.error.message).toMatch(/No available serviceProvider/);
+  });
+
+  it('refuses to re-route a request that is already underway', async () => {
+    const adminToken = await seedSuperAdmin();
+    const { serviceProvider } = await seedServiceProvider({ phone: '9300000033' });
+    const sr = await seedUnassignedRequest();
+    sr.status = 'Engineer Reached';
+    await sr.save();
+
+    const res = await request(app)
+      .patch(`/api/v1/service-requests/${sr.id}/assign`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ serviceProvider: serviceProvider.id })
+      .expect(409);
+    expect(res.body.error.message).toMatch(/Engineer Reached/);
+  });
+
+  it('rejects an inactive serviceProvider and a non-super-admin caller', async () => {
+    const adminToken = await seedSuperAdmin();
+    const { serviceProvider } = await seedServiceProvider({ phone: '9300000034' });
+    const custToken = await seedCustomer('9200000034');
+    const sr = await seedUnassignedRequest();
+
+    await ServiceProvider.findByIdAndUpdate(serviceProvider.id, { status: 'Inactive' });
+    const res = await request(app)
+      .patch(`/api/v1/service-requests/${sr.id}/assign`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ serviceProvider: serviceProvider.id })
+      .expect(409);
+    expect(res.body.error.message).toMatch(/not Active/);
+
+    await request(app)
+      .patch(`/api/v1/service-requests/${sr.id}/assign`)
+      .set('Authorization', `Bearer ${custToken}`)
+      .send({})
+      .expect(403);
+    await request(app).get(`/api/v1/service-requests/${sr.id}/service-provider-suggestions`).expect(401);
+  });
+});
+
+describe('15-minute search cut-off', () => {
+  const past = () => new Date(Date.now() - 1000);
+
+  async function bookIn(city, token) {
+    const res = await request(app)
+      .post('/api/v1/bookings')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ category: 'AC', serviceSlug: 'repair', address: { house: '1', city, pincode: '400001' } })
+      .expect(201);
+    return res.body.data;
+  }
+
+  it('starts every booking with a 15-minute search window', async () => {
+    await seedCatalog();
+    const token = await seedCustomer();
+    const { booking } = await bookIn('Mumbai', token);
+    const minutes = (new Date(booking.searchExpiresAt).getTime() - Date.now()) / 60000;
+    expect(minutes).toBeGreaterThan(14.5);
+    expect(minutes).toBeLessThanOrEqual(15);
+    expect((await expireStaleSearches()).expired).toBe(0);
+  });
+
+  it('cancels with NO_PROVIDERS_NEARBY when nobody serves the customer\'s area', async () => {
+    await seedCatalog();
+    const token = await seedCustomer();
+    const { booking, serviceRequest } = await bookIn('Mumbai', token);
+    await Booking.updateOne({ _id: booking.id }, { searchExpiresAt: past() });
+
+    expect((await expireStaleSearches()).expired).toBe(1);
+
+    const saved = await Booking.findById(booking.id);
+    expect(saved.status).toBe('Cancelled');
+    expect(saved.searchEndReason).toBe('NO_PROVIDERS_NEARBY');
+    expect(saved.cancellationReason).toBe(SEARCH_END_MESSAGES.NO_PROVIDERS_NEARBY);
+    expect((await ServiceRequest.findById(serviceRequest.id)).status).toBe('Cancelled');
+
+    // The customer app reads the reason from the booking.
+    const res = await request(app).get(`/api/v1/bookings/${booking.id}`).set('Authorization', `Bearer ${token}`).expect(200);
+    expect(res.body.data.searchEndReason).toBe('NO_PROVIDERS_NEARBY');
+  });
+
+  it('cancels with PROVIDERS_NOT_ACCEPTING when providers are in the area but none accepted', async () => {
+    await seedCatalog();
+    const { serviceProvider } = await seedServiceProvider({ availability: 'Offline' });
+    await ServiceProvider.updateOne({ _id: serviceProvider._id }, { serviceCityName: 'Mumbai' });
+    const token = await seedCustomer();
+    const { booking } = await bookIn('Mumbai', token);
+    await Booking.updateOne({ _id: booking.id }, { searchExpiresAt: past() });
+
+    await expireStaleSearches();
+    const saved = await Booking.findById(booking.id);
+    expect(saved.status).toBe('Cancelled');
+    expect(saved.searchEndReason).toBe('PROVIDERS_NOT_ACCEPTING');
+  });
+
+  it('treats a job that was offered to someone (and declined) as providers not accepting', async () => {
+    await seedCatalog();
+    const { serviceProvider, token: spToken } = await seedServiceProvider();
+    const token = await seedCustomer();
+    const { booking, serviceRequest } = await request(app)
+      .post('/api/v1/bookings')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ category: 'AC', serviceSlug: 'repair' })
+      .expect(201)
+      .then((r) => r.body.data);
+    await request(app).post(`/api/v1/service-provider/jobs/reject/${serviceRequest.id}`).set('Authorization', `Bearer ${spToken}`).expect(200);
+    await ServiceProvider.deleteOne({ _id: serviceProvider._id }); // nobody left nearby
+    await Booking.updateOne({ _id: booking.id }, { searchExpiresAt: past() });
+
+    await expireStaleSearches();
+    expect((await Booking.findById(booking.id)).searchEndReason).toBe('PROVIDERS_NOT_ACCEPTING');
+  });
+
+  it('leaves accepted bookings alone', async () => {
+    await seedCatalog();
+    const { token: spToken } = await seedServiceProvider();
+    const token = await seedCustomer();
+    const { booking, serviceRequest } = await request(app)
+      .post('/api/v1/bookings')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ category: 'AC', serviceSlug: 'repair' })
+      .expect(201)
+      .then((r) => r.body.data);
+    await request(app).post(`/api/v1/service-provider/jobs/accept/${serviceRequest.id}`).set('Authorization', `Bearer ${spToken}`).send({}).expect(200);
+
+    const accepted = await Booking.findById(booking.id);
+    expect(accepted.searchExpiresAt).toBeNull();
+    await Booking.updateOne({ _id: booking.id }, { searchExpiresAt: past() }); // even if a stale clock lingered
+    expect((await expireStaleSearches()).expired).toBe(0);
+    expect((await Booking.findById(booking.id)).status).not.toBe('Cancelled');
+  });
+});
